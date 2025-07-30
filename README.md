@@ -1,2 +1,1 @@
-# Auto-Trade-Agentffffff
-IDFKKKKK
+# Auto-Trade-Agent
