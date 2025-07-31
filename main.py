@@ -101,8 +101,8 @@ async def main():
     ][:50]
 
 
-    # Use first 30 S&P 500 tickers for broader testing
-    tickers = sp500_tickers[:30]
+    # Use first 30 S&P 500 tickers for broader testing, but skip the first 5
+    tickers = sp500_tickers[5:35]
 
     # For asset class analysis
     asset_classes = {}
@@ -234,12 +234,28 @@ async def main():
             n = asyncio.create_task(news_agent.run(ticker))
             d = asyncio.create_task(data_agent.run(ticker))
             t_ = asyncio.create_task(trend_agent.run(ticker, momentum=momentum, volatility=volatility))
-            news_result, data_result, trend_result = await asyncio.gather(n, d, t_)
+            try:
+                results = await asyncio.wait_for(
+                    asyncio.gather(n, d, t_, return_exceptions=True), timeout=15
+                )
+                news_result, data_result, trend_result = results
+            except asyncio.TimeoutError:
+                print(f"[TIMEOUT] Agent tasks for {ticker} took too long. Skipping this date.")
+                continue
+            except Exception as e:
+                print(f"[ERROR] Agent tasks for {ticker} failed: {e}. Skipping this date.")
+                continue
+            # Handle agent errors individually
+            def safe_score(result, key):
+                if isinstance(result, Exception):
+                    print(f"[AGENT ERROR] {key} for {ticker}: {result}")
+                    return 50  # Neutral score if agent fails
+                return result.get(key, 50)
             combined = {
                 "ticker": ticker,
-                "sentiment_score": news_result["sentiment_score"],
-                "fundamental_score": data_result["fundamental_score"],
-                "trend_score": trend_result["trend_score"]
+                "sentiment_score": safe_score(news_result, "sentiment_score"),
+                "fundamental_score": safe_score(data_result, "fundamental_score"),
+                "trend_score": safe_score(trend_result, "trend_score")
             }
             base_amount = 10000
             min_amount = 1000

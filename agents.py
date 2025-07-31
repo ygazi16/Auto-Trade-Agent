@@ -319,105 +319,54 @@ class NewsAgent:
 # DataAnalysisAgent: uses yfinance or Finnhub to get EPS, P/E, beta, volume and score them
 class DataAnalysisAgent:
     def __init__(self):
-        self.fmp_key = os.getenv('FMP_KEY')
+        self.polygon_key = os.getenv('POLYGON_KEY')
 
     async def run(self, ticker):
-        # Use FMP to get profile, income statement, rating, balance sheet, cash flow, ratios, ESG
-        if not self.fmp_key:
+        # Use Polygon.io to get profile, financials, and analyst data
+        if not self.polygon_key:
             fundamental_score = random.uniform(0.5, 0.95)
             return {"ticker": ticker, "fundamental_score": fundamental_score}
         try:
-            # Profile
-            url_profile = f"https://financialmodelingprep.com/api/v3/profile/{ticker}?apikey={self.fmp_key}"
+            # Company profile
+            url_profile = f"https://api.polygon.io/v3/reference/tickers/{ticker}?apiKey={self.polygon_key}"
             resp_profile = requests.get(url_profile)
-            data_profile = resp_profile.json()
-            if isinstance(data_profile, list) and data_profile:
-                profile = data_profile[0]
-                beta = profile.get('beta', None)
-                sector = profile.get('sector', None)
-                industry = profile.get('industry', None)
-                esg_score = profile.get('esgScore', None)
-            else:
-                beta = sector = industry = esg_score = None
-
-            # Income statement
-            url_income = f"https://financialmodelingprep.com/api/v3/income-statement/{ticker}?limit=1&apikey={self.fmp_key}"
-            resp_income = requests.get(url_income)
-            data_income = resp_income.json()
-            if isinstance(data_income, list) and data_income:
-                income = data_income[0]
-                revenue = income.get('revenue', None)
-                eps = income.get('eps', None)
-            else:
-                revenue = eps = None
-
-            # Balance sheet
-            url_bs = f"https://financialmodelingprep.com/api/v3/balance-sheet-statement/{ticker}?limit=1&apikey={self.fmp_key}"
-            resp_bs = requests.get(url_bs)
-            data_bs = resp_bs.json()
-            if isinstance(data_bs, list) and data_bs:
-                bs = data_bs[0]
-                total_assets = bs.get('totalAssets', None)
-                total_liabilities = bs.get('totalLiabilities', None)
-                cash = bs.get('cashAndCashEquivalents', None)
-            else:
-                total_assets = total_liabilities = cash = None
-
-            # Cash flow
-            url_cf = f"https://financialmodelingprep.com/api/v3/cash-flow-statement/{ticker}?limit=1&apikey={self.fmp_key}"
-            resp_cf = requests.get(url_cf)
-            data_cf = resp_cf.json()
-            if isinstance(data_cf, list) and data_cf:
-                cf = data_cf[0]
-                operating_cf = cf.get('operatingCashFlow', None)
-                free_cf = cf.get('freeCashFlow', None)
-            else:
-                operating_cf = free_cf = None
-
-            # Key ratios
-            url_ratios = f"https://financialmodelingprep.com/api/v3/ratios/{ticker}?limit=1&apikey={self.fmp_key}"
-            resp_ratios = requests.get(url_ratios)
-            data_ratios = resp_ratios.json()
-            if isinstance(data_ratios, list) and data_ratios:
-                ratios = data_ratios[0]
-                roe = ratios.get('returnOnEquity', None)
-                roa = ratios.get('returnOnAssets', None)
-                debt_equity = ratios.get('debtEquityRatio', None)
-            else:
-                roe = roa = debt_equity = None
-
-            # Analyst ratings
-            url_rating = f"https://financialmodelingprep.com/api/v3/rating/{ticker}?apikey={self.fmp_key}"
-            resp_rating = requests.get(url_rating)
-            data_rating = resp_rating.json()
-            if isinstance(data_rating, list) and data_rating:
-                analyst_rating = data_rating[0].get('ratingRecommendation', None)
-                analyst_target_price = data_rating[0].get('rating', None)
-            else:
-                analyst_rating = analyst_target_price = None
-
+            data_profile = resp_profile.json().get('results', {})
+            sector = data_profile.get('sic_description', None)
+            industry = data_profile.get('market', None)
+            # Financials (latest annual)
+            url_financials = f"https://api.polygon.io/vX/reference/financials?ticker={ticker}&limit=1&type=annual&apiKey={self.polygon_key}"
+            resp_fin = requests.get(url_financials)
+            data_fin = resp_fin.json().get('results', [{}])[0]
+            revenue = data_fin.get('revenue', None)
+            eps = data_fin.get('earningsPerBasicShare', None)
+            total_assets = data_fin.get('assets', None)
+            total_liabilities = data_fin.get('liabilities', None)
+            cash = data_fin.get('cashAndCashEquivalents', None)
+            operating_cf = data_fin.get('operatingCashFlow', None)
+            free_cf = data_fin.get('freeCashFlow', None)
+            roe = data_fin.get('roe', None)
+            roa = data_fin.get('roa', None)
+            debt_equity = data_fin.get('debtEquityRatio', None)
+            # Analyst ratings (not available in Polygon, set to None)
+            analyst_rating = None
+            analyst_target_price = None
             # Score: combine all available metrics
             score = 0.5
             try:
                 eps_score = min(max(float(eps)/10, 0), 1) if eps is not None else 0.5
-                beta_score = 1 - min(abs(float(beta)-1), 1) if beta is not None else 0.5
                 revenue_score = min(max(float(revenue)/1e11, 0), 1) if revenue is not None else 0.5
                 roe_score = min(max(float(roe)/0.5, 0), 1) if roe is not None else 0.5
-                esg_score_norm = min(max(float(esg_score)/100, 0), 1) if esg_score is not None else 0.5
-                analyst_score = 1.0 if analyst_rating and analyst_rating.lower() in ['buy', 'strong buy'] else 0.5
-                score = (eps_score + beta_score + revenue_score + roe_score + esg_score_norm + analyst_score) / 6
+                analyst_score = 0.5  # No analyst rating
+                score = (eps_score + revenue_score + roe_score + analyst_score) / 4
             except Exception:
                 pass
-
             return {
                 "ticker": ticker,
                 "fundamental_score": score,
                 "eps": eps,
-                "beta": beta,
                 "revenue": revenue,
                 "sector": sector,
                 "industry": industry,
-                "esg_score": esg_score,
                 "total_assets": total_assets,
                 "total_liabilities": total_liabilities,
                 "cash": cash,
